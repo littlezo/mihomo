@@ -118,8 +118,9 @@ func (u *URLTest) fast(touch bool) C.Proxy {
 		fast := proxies[0]
 		minDelay := fast.LastDelayForTestUrl(u.testUrl)
 		fastNotExist := true
+		hasAlive := false
 
-		for _, proxy := range proxies[1:] {
+		for _, proxy := range proxies {
 			if u.fastNode != nil && proxy.Name() == u.fastNode.Name() {
 				fastNotExist = false
 			}
@@ -129,12 +130,26 @@ func (u *URLTest) fast(touch bool) C.Proxy {
 			}
 
 			delay := proxy.LastDelayForTestUrl(u.testUrl)
+			if !hasAlive {
+				// 以第一个存活节点为候选，避免死节点 proxies[0] 占位导致永远选死节点
+				fast = proxy
+				minDelay = delay
+				hasAlive = true
+				continue
+			}
 			if delay < minDelay {
 				fast = proxy
 				minDelay = delay
 			}
-
 		}
+
+		if !hasAlive {
+			// 全部节点不可达：降级 EmptyFallback(REJECT)，避免继续 dial 死节点；
+			// 周期健康检查恢复后下一次 fast() 自动重新选活节点（自愈）
+			u.fastNode = u.EmptyFallback()
+			return u.fastNode, nil
+		}
+
 		// tolerance
 		if u.fastNode == nil || fastNotExist || !u.fastNode.AliveForTestUrl(u.testUrl) || u.fastNode.LastDelayForTestUrl(u.testUrl) > fast.LastDelayForTestUrl(u.testUrl)+u.tolerance {
 			u.fastNode = fast

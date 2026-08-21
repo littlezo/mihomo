@@ -86,33 +86,36 @@ func ListenPacket(ctx context.Context, network, address string, rAddrPort netip.
 	if DefaultSocketHook != nil { // ignore interfaceName, routingMark when DefaultSocketHook not null (in CMFA)
 		socketHookToListenConfig(lc)
 	} else {
-		if opt.interfaceName == "" {
-			opt.interfaceName = DefaultInterface.Load()
-		}
-		if opt.interfaceName == "" {
-			if finder := DefaultInterfaceFinder.Load(); finder != nil {
-				opt.interfaceName = finder.FindInterfaceName(rAddrPort.Addr().Unmap())
-			}
-		}
-		if rAddrPort.Addr().Unmap().IsLoopback() {
-			// avoid "The requested address is not valid in its context."
-			opt.interfaceName = ""
-		}
-		if opt.interfaceName != "" {
-			bind := bindIfaceToListenConfig
-			if opt.fallbackBind {
-				bind = fallbackBindIfaceToListenConfig
-			}
-			addr, err := bind(opt.interfaceName, lc, network, address, rAddrPort)
-			if err != nil {
-				return nil, err
-			}
-			address = addr
-		}
 		if opt.routingMark == 0 {
 			opt.routingMark = int(DefaultRoutingMark.Load())
 		}
-		if opt.routingMark != 0 {
+		// kernel 6.12+: SO_BINDTODEVICE 先于 SO_MARK 设置时，服务端 SYN-ACK 回程 socket 查找失败 → RST。
+		// routingMark != 0 时路由已按 fwmark 定向，跳过 BINDTODEVICE 避免触发该 bug。
+		if opt.routingMark == 0 {
+			if opt.interfaceName == "" {
+				opt.interfaceName = DefaultInterface.Load()
+			}
+			if opt.interfaceName == "" {
+				if finder := DefaultInterfaceFinder.Load(); finder != nil {
+					opt.interfaceName = finder.FindInterfaceName(rAddrPort.Addr().Unmap())
+				}
+			}
+			if rAddrPort.Addr().Unmap().IsLoopback() {
+				// avoid "The requested address is not valid in its context."
+				opt.interfaceName = ""
+			}
+			if opt.interfaceName != "" {
+				bind := bindIfaceToListenConfig
+				if opt.fallbackBind {
+					bind = fallbackBindIfaceToListenConfig
+				}
+				addr, err := bind(opt.interfaceName, lc, network, address, rAddrPort)
+				if err != nil {
+					return nil, err
+				}
+				address = addr
+			}
+		} else {
 			bindMarkToListenConfig(opt.routingMark, lc, network, address)
 		}
 	}
@@ -143,27 +146,29 @@ func dialContext(ctx context.Context, network string, destination netip.Addr, po
 	if DefaultSocketHook != nil { // ignore interfaceName, routingMark and tfo when DefaultSocketHook not null (in CMFA)
 		socketHookToToDialer(dialer)
 	} else {
-		if opt.interfaceName == "" {
-			opt.interfaceName = DefaultInterface.Load()
-		}
-		if opt.interfaceName == "" {
-			if finder := DefaultInterfaceFinder.Load(); finder != nil {
-				opt.interfaceName = finder.FindInterfaceName(destination)
-			}
-		}
-		if opt.interfaceName != "" {
-			bind := bindIfaceToDialer
-			if opt.fallbackBind {
-				bind = fallbackBindIfaceToDialer
-			}
-			if err := bind(opt.interfaceName, dialer, network, destination); err != nil {
-				return nil, err
-			}
-		}
 		if opt.routingMark == 0 {
 			opt.routingMark = int(DefaultRoutingMark.Load())
 		}
-		if opt.routingMark != 0 {
+		// kernel 6.12+ 修复：routingMark != 0 时跳过 BINDTODEVICE（见 ListenPacket 注释）
+		if opt.routingMark == 0 {
+			if opt.interfaceName == "" {
+				opt.interfaceName = DefaultInterface.Load()
+			}
+			if opt.interfaceName == "" {
+				if finder := DefaultInterfaceFinder.Load(); finder != nil {
+					opt.interfaceName = finder.FindInterfaceName(destination)
+				}
+			}
+			if opt.interfaceName != "" {
+				bind := bindIfaceToDialer
+				if opt.fallbackBind {
+					bind = fallbackBindIfaceToDialer
+				}
+				if err := bind(opt.interfaceName, dialer, network, destination); err != nil {
+					return nil, err
+				}
+			}
+		} else {
 			bindMarkToDialer(opt.routingMark, dialer, network, destination)
 		}
 		if opt.tfo && !DisableTFO {
@@ -180,19 +185,21 @@ func ICMPControl(destination netip.Addr) func(network, address string, conn sysc
 			return DefaultSocketHook(network, address, conn)
 		}
 		dialer := &net.Dialer{}
-		interfaceName := DefaultInterface.Load()
-		if interfaceName == "" {
-			if finder := DefaultInterfaceFinder.Load(); finder != nil {
-				interfaceName = finder.FindInterfaceName(destination)
-			}
-		}
-		if interfaceName != "" {
-			if err := bindIfaceToDialer(interfaceName, dialer, network, destination); err != nil {
-				return err
-			}
-		}
 		routingMark := int(DefaultRoutingMark.Load())
-		if routingMark != 0 {
+		// kernel 6.12+ 修复：routingMark != 0 时跳过 BINDTODEVICE（见 ListenPacket 注释）
+		if routingMark == 0 {
+			interfaceName := DefaultInterface.Load()
+			if interfaceName == "" {
+				if finder := DefaultInterfaceFinder.Load(); finder != nil {
+					interfaceName = finder.FindInterfaceName(destination)
+				}
+			}
+			if interfaceName != "" {
+				if err := bindIfaceToDialer(interfaceName, dialer, network, destination); err != nil {
+					return err
+				}
+			}
+		} else {
 			bindMarkToDialer(routingMark, dialer, network, destination)
 		}
 		if dialer.ControlContext != nil {

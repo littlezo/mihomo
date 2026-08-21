@@ -120,6 +120,10 @@ func (f *Fallback) findAliveProxy(touch bool) C.Proxy {
 		}
 	}
 
+	// 全部节点不可达：降级 EmptyFallback(REJECT)，避免继续 dial 死节点（kernel/服务端抖动时快速失败）
+	if f.EmptyFallback() != nil {
+		return f.EmptyFallback()
+	}
 	return proxies[0]
 }
 

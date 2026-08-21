@@ -621,15 +621,16 @@ func (d *cDialerInterfaceFinder) FindInterfaceName(destination netip.Addr) strin
 	for _, dest := range []netip.Addr{destination, netip.IPv4Unspecified(), netip.IPv6Unspecified()} {
 		autoDetectInterfaceName := d.DefaultInterfaceName(dest)
 		if autoDetectInterfaceName == d.tunName {
-			log.Warnln("[TUN] Auto detect interface for %s get same name with tun", destination.String())
+			log.Debugln("[TUN] Auto detect interface for %s get same name with tun", destination.String())
 		} else if autoDetectInterfaceName == "" || autoDetectInterfaceName == "<nil>" {
-			log.Warnln("[TUN] Auto detect interface for %s get empty name.", destination.String())
+			// 对无法映射到具体接口的目标（如 route-exclude 的 DNS IP），静默处理，避免启动警告风暴
+			log.Debugln("[TUN] Auto detect interface for %s get empty name.", destination.String())
 		} else {
 			log.Debugln("[TUN] Auto detect interface for %s --> %s", destination, autoDetectInterfaceName)
 			return autoDetectInterfaceName
 		}
 	}
-	log.Warnln("[TUN] Auto detect interface for %s failed, return '<invalid>' to avoid lookback", destination)
+	log.Debugln("[TUN] Auto detect interface for %s failed, return '<invalid>' to avoid lookback", destination)
 	return "<invalid>"
 }
 
